@@ -373,20 +373,25 @@
         width: 100%;
         min-width: 0;
         box-shadow: 2px 2px 0 rgba(0,0,0,0.05);
-        cursor: pointer;
         z-index: 2;
+        /* No generic cursor:pointer on parent anymore */
     }
-    .bracket-match-card:hover { transform: translateY(-1px); border-color: var(--brand-blue); }
     .bracket-match-card.active { border-color: var(--brand); box-shadow: 0 0 0 2px rgba(250, 204, 21, 0.3); }
     
     .b-team { 
         display: flex; justify-content: space-between; align-items: center;
-        font-size: 0.8rem; font-weight: 700; padding: 2px 0; 
-        white-space: nowrap; overflow: hidden;
+        font-size: 0.8rem; font-weight: 700; padding: 4px 6px; 
+        white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
         min-width: 0;
+        border-radius: 4px;
+        transition: background 0.15s;
     }
     .b-team.winner { color: var(--brand-blue); }
     .b-team.loser { color: var(--text-muted); opacity: 0.6; }
+    
+    /* Interactive Team in Bracket */
+    .b-team.team-pick { cursor: pointer; }
+    .b-team.team-pick:hover { background-color: #eff6ff; color: var(--brand-blue); }
     
     /* Layout Positions */
     .node-qf1 { grid-column: 1; grid-row: 2; }
@@ -410,6 +415,7 @@
     .node-qf1::after { content: ''; position: absolute; z-index: 1; right: -50%; top: 50%; width: 50%; height: 150%; border-right: 2px solid var(--stroke); border-bottom: 2px solid var(--stroke); }
     .node-qf2::after { content: ''; position: absolute; z-index: 1; right: -50%; bottom: 50%; width: 50%; height: 150%; border-right: 2px solid var(--stroke); border-top: 2px solid var(--stroke); }
     .node-semi1::after { content: ''; position: absolute; z-index: 1; right: -50%; top: 50%; width: 50%; height: 2px; background: var(--stroke); }
+
     .node-qf3::after { content: ''; position: absolute; z-index: 1; left: -50%; top: 50%; width: 50%; height: 150%; border-left: 2px solid var(--stroke); border-bottom: 2px solid var(--stroke); }
     .node-qf4::after { content: ''; position: absolute; z-index: 1; left: -50%; bottom: 50%; width: 50%; height: 150%; border-left: 2px solid var(--stroke); border-top: 2px solid var(--stroke); }
     .node-semi2::after { content: ''; position: absolute; z-index: 1; left: -50%; top: 50%; width: 50%; height: 2px; background: var(--stroke); }
@@ -459,6 +465,7 @@
 
     .toast { position: fixed; bottom: 20px; left: 50%; transform: translateX(-50%); background: var(--header-bg); color: var(--brand); padding: 8px 16px; border-radius: 99px; font-weight: 700; opacity: 0; pointer-events: none; transition: 0.3s; z-index: 200; }
     .toast.show { opacity: 1; transform: translateX(-50%) translateY(-10px); }
+    .undo-container { text-align: center; margin-top: 5px; }
     .undo-btn { background: none; border: none; color: var(--text-muted); text-decoration: underline; cursor: pointer; font-size: 0.8rem; }
     .undo-btn:hover { color: var(--danger); font-weight: bold; }
     .bracket-projected-header { text-align: center; padding: 0.5rem; margin-bottom: 0.5rem; color: var(--header-bg); font-weight: 700; background: #eff6ff; border: 1px dashed var(--brand-blue); border-radius: 8px; font-size: 0.85rem; }
@@ -1094,22 +1101,32 @@ class TournamentApp {
   }
 
   renderBracket() {
+    // 1. Capture current scroll
+    const container = this.ui.bracket.querySelector('.bracket-container');
+    const scrollLeft = container ? container.scrollLeft : 0;
+    const scrollTop = container ? container.scrollTop : 0;
+
     let title = '';
     let matches = [];
     let championHtml = '';
+    
     const poolKeys = Object.keys(this.getStandings());
     const isSmallBracket = poolKeys.length === 2;
 
+    // DATA GATHERING
     if (this.data.phase === 'pool') {
         title = '<div class="bracket-projected-header">Projected Bracket (Live Standings)</div>';
         const s = this.getStandings();
+        
         if (isSmallBracket) {
+            // 8 Team Logic
             matches = [
                 { round: 'Semifinals', home: s.A?s.A[0].id:null, away: s.B?s.B[1].id:null, id: 'semi1' },
                 { round: 'Semifinals', home: s.B?s.B[0].id:null, away: s.A?s.A[1].id:null, id: 'semi2' },
                 { round: 'Finals', home: null, away: null, id: 'final' }
             ];
         } else {
+            // 16+ Team Logic
             matches = [
                 { round: 'Quarterfinals', home: s.A[0].id, away: s.B[1].id, id: 'qf1' },
                 { round: 'Quarterfinals', home: s.D[0].id, away: s.C[1].id, id: 'qf2' },
@@ -1122,37 +1139,105 @@ class TournamentApp {
         }
     } else {
         matches = this.data.playoffGames;
+        
+        // CHECK FOR CHAMPION
         const finalMatch = matches.find(g => g.id === 'final');
         if (finalMatch && finalMatch.winner) {
             const winnerName = this.data.teams[finalMatch.winner].name;
-            championHtml = `<div class="champion-banner"><div class="champ-title">🏆 2025 CHAMPIONS 🏆</div><div class="champ-name">${winnerName}</div></div>`;
+            championHtml = `
+                <div class="champion-banner">
+                    <div class="champ-title">🏆 2025 CHAMPIONS 🏆</div>
+                    <div class="champ-name">${winnerName}</div>
+                </div>
+            `;
         }
     }
 
+    // HELPER: RENDER SINGLE CARD
     const renderCard = (matchId, roundClass) => {
         const m = matches.find(g => g.id === matchId);
         if(!m) return '<div class="bracket-node"></div>';
+
         const hName = m.home ? this.data.teams[m.home].name : 'TBD';
         const aName = m.away ? this.data.teams[m.away].name : 'TBD';
         const active = (m.home && m.away && !m.winner) ? 'active' : '';
+        
+        // Winner/Loser classes
         const hClass = m.winner === m.home && m.winner ? 'winner' : (m.winner ? 'loser' : '');
         const aClass = m.winner === m.away && m.winner ? 'winner' : (m.winner ? 'loser' : '');
-        return `<div class="bracket-node ${roundClass}"><div class="bracket-match-card ${active}" onclick="app.recordWin('${m.id}', '${m.home}')"><div class="b-team ${hClass}">${hName}</div><div class="b-team ${aClass}" style="border-top:1px solid #eee;">${aName}</div></div></div>`;
+
+        // Click handlers only if active and teams exist
+        const hClick = (active && m.home) ? `onclick="event.stopPropagation(); app.recordWin('${m.id}', '${m.home}')"` : '';
+        const aClick = (active && m.away) ? `onclick="event.stopPropagation(); app.recordWin('${m.id}', '${m.away}')"` : '';
+        
+        // Hover class for individual teams if active
+        const hHover = (active && m.home) ? 'team-pick' : '';
+        const aHover = (active && m.away) ? 'team-pick' : '';
+
+        return `
+            <div class="bracket-node ${roundClass}">
+                <div class="bracket-match-card ${active}">
+                    <div class="b-team ${hClass} ${hHover}" ${hClick}>${hName}</div>
+                    <div class="b-team ${aClass} ${aHover}" style="border-top:1px solid #eee;" ${aClick}>${aName}</div>
+                </div>
+            </div>
+        `;
     };
 
+    // GENERATE GRID HTML
     let containerClass = isSmallBracket ? "bracket-container small-bracket" : "bracket-container";
     let html = title + `<div class="${containerClass}">`;
     
     if (isSmallBracket) {
-        html += '<div class="bracket-header-cell" style="grid-column:1;">Semifinals</div><div class="bracket-header-cell" style="grid-column:2;">Championship</div><div class="bracket-header-cell" style="grid-column:3;">Semifinals</div>';
-        html += renderCard('semi1', 'node-semi1') + renderCard('semi2', 'node-semi2') + renderCard('final', 'node-final');
+        // SMALL BRACKET (3 Columns)
+        html += '<div class="bracket-header-cell" style="grid-column:1;">Semifinals</div>';
+        html += '<div class="bracket-header-cell" style="grid-column:2;">Championship</div>';
+        html += '<div class="bracket-header-cell" style="grid-column:3;">Semifinals</div>';
+        
+        // SEMI 1
+        html += renderCard('semi1', 'node-semi1');
+        // SEMI 2
+        html += renderCard('semi2', 'node-semi2');
+        // FINAL
+        html += renderCard('final', 'node-final');
     } else {
-        html += '<div class="bracket-header-cell" style="grid-column:1;">Quarterfinals</div><div class="bracket-header-cell" style="grid-column:2;">Semifinals</div><div class="bracket-header-cell" style="grid-column:3;">Championship</div><div class="bracket-header-cell" style="grid-column:4;">Semifinals</div><div class="bracket-header-cell" style="grid-column:5;">Quarterfinals</div>';
-        html += renderCard('qf1', 'node-qf1') + renderCard('qf2', 'node-qf2') + renderCard('qf3', 'node-qf3') + renderCard('qf4', 'node-qf4') + renderCard('semi1', 'node-semi1') + renderCard('semi2', 'node-semi2') + renderCard('final', 'node-final');
+        // STANDARD BRACKET (5 Columns)
+        html += '<div class="bracket-header-cell" style="grid-column:1;">Quarterfinals</div>';
+        html += '<div class="bracket-header-cell" style="grid-column:2;">Semifinals</div>';
+        html += '<div class="bracket-header-cell" style="grid-column:3;">Championship</div>';
+        html += '<div class="bracket-header-cell" style="grid-column:4;">Semifinals</div>';
+        html += '<div class="bracket-header-cell" style="grid-column:5;">Quarterfinals</div>';
+
+        // QF1
+        html += renderCard('qf1', 'node-qf1');
+        // QF2
+        html += renderCard('qf2', 'node-qf2');
+        // QF3
+        html += renderCard('qf3', 'node-qf3');
+        // QF4
+        html += renderCard('qf4', 'node-qf4');
+        
+        // SEMI 1
+        html += renderCard('semi1', 'node-semi1');
+        // SEMI 2
+        html += renderCard('semi2', 'node-semi2');
+        
+        // FINAL
+        html += renderCard('final', 'node-final');
     }
 
-    html += '</div>' + championHtml;
+    html += '</div>';
+    // Append Champion Banner
+    html += championHtml;
+    
     this.ui.bracket.innerHTML = html;
+
+    // 2. Restore scroll
+    const newContainer = this.ui.bracket.querySelector('.bracket-container');
+    if (newContainer) {
+        newContainer.scrollLeft = scrollLeft;
+        newContainer.scrollTop = scrollTop;
+    }
   }
   
   jumpToMatch(id) {}
